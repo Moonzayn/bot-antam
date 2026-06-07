@@ -142,7 +142,7 @@ async def start_browser():
 
 async def do_login(page, email: str, password: str):
     await page.goto("https://antrean.logammulia.com/login")
-    await asyncio.sleep(3)
+    await asyncio.sleep(2)
 
     async with ClickSolver(framework=FrameworkType.PATCHRIGHT, page=page) as solver:
         try:
@@ -153,7 +153,12 @@ async def do_login(page, email: str, password: str):
         except Exception as e:
             logging.info(f"Solver selesai: {e}")
 
-    await page.wait_for_timeout(5000)
+    try:
+        await page.wait_for_selector("input#aritmetika, input[name='aritmetika']", timeout=30000)
+        logging.info("CF selesai, form login ditemukan")
+    except:
+        logging.warning("Form login tidak muncul setelah CF solver")
+        return False
 
     for f in page.frames:
         try:
@@ -239,7 +244,12 @@ async def relogin(page, email: str, password: str, belm: str):
         except Exception as e:
             logging.info(f"Solver selesai: {e}")
 
-    await page.wait_for_timeout(5000)
+    try:
+        await page.wait_for_selector("input#aritmetika, input[name='aritmetika']", timeout=30000)
+        logging.info("CF selesai, form login ditemukan")
+    except:
+        logging.warning("Form login tidak muncul setelah CF solver")
+        return
 
     for f in page.frames:
         try:
