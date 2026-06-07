@@ -2,6 +2,7 @@ import asyncio
 import re
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from patchright.async_api import async_playwright
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
@@ -35,18 +36,31 @@ BELM_OPTIONS = [
     "Exhibition - BSI Tower",
 ]
 
-LOGIN_BUFFER_SEC = 180  # login 3 menit sebelum target
+SESSION_FILE = "session.json"
+URL_TIKET_FILE = "url_tiket.txt"
+LOGIN_BUFFER_SEC = 180
 
+# ============================================================
+# HELPERS
+# ============================================================
 
 def pilih_belm():
     print("\n=== PILIH CABANG BELM ===\n")
     for i, b in enumerate(BELM_OPTIONS, 1):
         print(f"  {i:>2}. {b}")
     while True:
+        raw = input(f"\nPilih nomor (pisah koma untuk backup): ").strip()
         try:
-            pilih = int(input(f"\nPilih nomor (1-{len(BELM_OPTIONS)}): "))
-            if 1 <= pilih <= len(BELM_OPTIONS):
-                return BELM_OPTIONS[pilih - 1]
+            indices = [int(x.strip()) for x in raw.split(",") if x.strip()]
+            hasil = []
+            for idx in indices:
+                if 1 <= idx <= len(BELM_OPTIONS):
+                    hasil.append(BELM_OPTIONS[idx - 1])
+            if hasil:
+                print(f"  #1: {hasil[0]}")
+                for j, h in enumerate(hasil[1:], 2):
+                    print(f"  #{j}: {h} (backup)")
+                return hasil
         except ValueError:
             pass
         print("Input tidak valid!")
@@ -84,32 +98,49 @@ def next_target(hhmm: str) -> datetime:
     return target
 
 
-async def countdown_standby(target_dt: datetime):
-    login_time = target_dt - timedelta(seconds=LOGIN_BUFFER_SEC)
-    now = datetime.now()
-    if now >= login_time:
-        return
-    total_sisa = int((login_time - now).total_seconds())
-    print(f"  Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
-    print(f"  Login fase: {login_time.strftime('%H:%M:%S')} (T-3 menit)")
-    print(f"  Total standby: {total_sisa // 60} menit\n")
-    while datetime.now() < login_time:
-        sisa = int((login_time - datetime.now()).total_seconds())
-        menit = sisa // 60
-        detik = sisa % 60
-        print(f"  Standby: {menit}m {detik}s tersisa...")
-        await asyncio.sleep(60)
+# ============================================================
+# SESSION MANAGEMENT
+# ============================================================
+
+async def save_session(ctx):
+    cookies = await ctx.cookies()
+    with open(SESSION_FILE, "w") as f:
+        json.dump(cookies, f, indent=2)
+    logging.info(f"Session disimpan ke {SESSION_FILE}")
 
 
-async def launch_and_login(cfg: dict, belm: str):
-    EMAIL = cfg["email"]
-    PASSWORD = cfg["password"]
+async def load_session(browser) -> "context|None":
+    if not os.path.exists(SESSION_FILE):
+        return None
+    with open(SESSION_FILE) as f:
+        cookies = json.load(f)
+    ctx = await browser.new_context()
+    await ctx.add_cookies(cookies)
+    return ctx
 
+
+async def is_session_valid(page) -> bool:
+    try:
+        await page.goto("https://antrean.logammulia.com/antrean")
+        await page.wait_for_timeout(3000)
+        if await page.locator("#site").is_visible():
+            return True
+        return False
+    except:
+        return False
+
+
+# ============================================================
+# BROWSER + LOGIN
+# ============================================================
+
+async def start_browser():
     p = await async_playwright().start()
     browser = await p.chromium.launch(headless=False, channel="chrome")
-    ctx = await browser.new_context()
-    page = await ctx.new_page()
+    return p, browser
 
+
+async def do_login(page, email: str, password: str):
     await page.goto("https://antrean.logammulia.com/login")
     await asyncio.sleep(3)
 
@@ -122,57 +153,77 @@ async def launch_and_login(cfg: dict, belm: str):
         except Exception as e:
             logging.info(f"Solver selesai: {e}")
 
-    logging.info("Menunggu form login...")
     await page.wait_for_timeout(5000)
 
-    try:
-        await page.wait_for_selector("input#aritmetika, input[name='aritmetika']", timeout=10000)
-        logging.info("Form login ditemukan!")
-    except:
-        logging.info("Form tidak ketemu di main frame, cek iframe...")
-
-    frames = page.frames
-    for f in frames:
+    for f in page.frames:
         try:
             math_inp = await f.query_selector("input#aritmetika, input[name='aritmetika']")
-            if math_inp:
-                username = await f.query_selector("input[type='text'], input[name='username'], input[placeholder*='email' i]")
-                if username:
-                    await username.fill("")
-                    await username.fill(EMAIL)
+            if not math_inp:
+                continue
+            username = await f.query_selector("input[type='text'], input[name='username'], input[placeholder*='email' i]")
+            if username:
+                await username.fill("")
+                await username.fill(email)
 
-                password = await f.query_selector("input[type='password']")
-                if password:
-                    await password.fill(PASSWORD)
+            pw = await f.query_selector("input[type='password']")
+            if pw:
+                await pw.fill(password)
 
-                label = await f.query_selector("label[for='aritmetika']")
-                if label:
-                    text = await label.text_content() or ""
-                    answer = solve_math(text)
-                    await math_inp.fill(answer)
-                    logging.info(f"Math: {text.strip()} -> {answer}")
+            label = await f.query_selector("label[for='aritmetika']")
+            if label:
+                text = await label.text_content() or ""
+                answer = solve_math(text)
+                await math_inp.fill(answer)
+                logging.info(f"Math: {text.strip()} -> {answer}")
 
-                btn = await f.query_selector("button:has-text('Log in'), button[type='submit']")
-                if btn:
-                    await btn.click()
+            btn = await f.query_selector("button:has-text('Log in'), button[type='submit']")
+            if btn:
+                await btn.click()
+            await page.wait_for_timeout(5000)
+            return True
+        except:
+            pass
+    return False
 
-                await page.wait_for_timeout(5000)
-                break
-        except Exception as e:
-            logging.warning(f"Frame error: {e}")
 
+async def select_belm(page, belm: str):
     await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
     await page.wait_for_timeout(5000)
-
     await page.wait_for_selector("#site", timeout=10000)
-    option_value = await page.locator(f"#site option:has-text('{BELM}')").get_attribute("value")
+    option_value = await page.locator(f"#site option:has-text('{belm}')").get_attribute("value")
     await page.locator("#site").select_option(option_value)
-    logging.info(f"Cabang: {BELM}")
-
+    logging.info(f"Cabang: {belm}")
     await page.locator('button:has-text("Tampilkan Butik")').click()
     await page.wait_for_timeout(3000)
 
-    return p, browser, page
+
+async def login_and_prepare(browser, cfg: dict, belm_list: list):
+    ctx = None
+    page = None
+
+    for belm in belm_list:
+        if ctx:
+            await ctx.close()
+        ctx = await browser.new_context()
+        page = await ctx.new_page()
+
+        ok = await do_login(page, cfg["email"], cfg["password"])
+        if not ok:
+            logging.error("Login gagal")
+            continue
+
+        await select_belm(page, belm)
+
+        kuota = page.locator("p.text-danger:has-text('Kuota antrean')")
+        if await kuota.is_visible():
+            logging.warning(f"{belm}: Kuota tidak tersedia, coba backup...")
+            continue
+
+        logging.info(f"{belm}: Kuota tersedia!")
+        return ctx, page, belm
+
+    logging.error("Semua BELM penuh atau error")
+    return None, None, None
 
 
 async def relogin(page, email: str, password: str, belm: str):
@@ -194,40 +245,37 @@ async def relogin(page, email: str, password: str, belm: str):
     for f in page.frames:
         try:
             math_inp = await f.query_selector("input#aritmetika, input[name='aritmetika']")
-            if math_inp:
-                username = await f.query_selector("input[type='text'], input[name='username'], input[placeholder*='email' i]")
-                if username:
-                    await username.fill("")
-                    await username.fill(email)
+            if not math_inp:
+                continue
+            username = await f.query_selector("input[type='text'], input[name='username'], input[placeholder*='email' i]")
+            if username:
+                await username.fill("")
+                await username.fill(email)
 
-                password_el = await f.query_selector("input[type='password']")
-                if password_el:
-                    await password_el.fill(password)
+            pw = await f.query_selector("input[type='password']")
+            if pw:
+                await pw.fill(password)
 
-                label = await f.query_selector("label[for='aritmetika']")
-                if label:
-                    text = await label.text_content() or ""
-                    answer = solve_math(text)
-                    await math_inp.fill(answer)
+            label = await f.query_selector("label[for='aritmetika']")
+            if label:
+                text = await label.text_content() or ""
+                answer = solve_math(text)
+                await math_inp.fill(answer)
 
-                btn = await f.query_selector("button:has-text('Log in'), button[type='submit']")
-                if btn:
-                    await btn.click()
-                await page.wait_for_timeout(5000)
-                break
+            btn = await f.query_selector("button:has-text('Log in'), button[type='submit']")
+            if btn:
+                await btn.click()
+            await page.wait_for_timeout(5000)
+            break
         except:
             pass
 
-    await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
-    await page.wait_for_timeout(5000)
+    await select_belm(page, belm)
 
-    await page.wait_for_selector("#site", timeout=10000)
-    option_value = await page.locator(f"#site option:has-text('{belm}')").get_attribute("value")
-    await page.locator("#site").select_option(option_value)
 
-    await page.locator('button:has-text("Tampilkan Butik")').click()
-    await page.wait_for_timeout(3000)
-
+# ============================================================
+# KEEP ALIVE
+# ============================================================
 
 async def keep_alive_loop(page, target_dt: datetime, belm: str, email: str, password: str):
     last_check = datetime.now()
@@ -264,37 +312,81 @@ async def keep_alive_loop(page, target_dt: datetime, belm: str, email: str, pass
             if has_form:
                 logging.info("Form / slot terdeteksi! Segera submit...")
                 return
-
-            await page.evaluate("window.location.href")
         except Exception as e:
             logging.warning(f"Keep alive error: {e}")
 
         await asyncio.sleep(8)
 
 
+# ============================================================
+# RACE SUBMIT (PLACEHOLDER)
+# ============================================================
+
 async def race_submit(page):
     logging.info("=== RACE SUBMIT PHASE (placeholder) ===")
     await page.wait_for_timeout(3000)
 
 
-async def run():
-    with open("config.json") as f:
-        cfg = json.load(f)
+# ============================================================
+# COUNTDOWN STANDBY
+# ============================================================
 
-    belm = pilih_belm()
+async def countdown_standby(target_dt: datetime):
+    login_time = target_dt - timedelta(seconds=LOGIN_BUFFER_SEC)
+    now = datetime.now()
+    if now >= login_time:
+        return
+    total_sisa = int((login_time - now).total_seconds())
+    print(f"  Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
+    print(f"  Login fase: {login_time.strftime('%H:%M:%S')} (T-3 menit)")
+    print(f"  Total standby: {total_sisa // 60} menit\n")
+    while datetime.now() < login_time:
+        sisa = int((login_time - datetime.now()).total_seconds())
+        print(f"  Standby: {sisa // 60}m {sisa % 60}s tersisa...")
+        await asyncio.sleep(60)
+
+
+# ============================================================
+# MODES
+# ============================================================
+
+async def mode_login_only(cfg):
+    p, browser = await start_browser()
+    ctx = await browser.new_context()
+    page = await ctx.new_page()
+
+    ok = await do_login(page, cfg["email"], cfg["password"])
+    if ok:
+        await save_session(ctx)
+        print("\n>>> Login sukses. Session disimpan.")
+
+    input("\nTekan Enter untuk tutup browser...")
+    await browser.close()
+    await p.stop()
+
+
+async def mode_auto_war(cfg):
+    belm_list = pilih_belm()
     target_hhmm = input_jam()
     target_dt = next_target(target_hhmm)
 
-    print(f"\n>>> Target antrean: {target_dt.strftime('%A %d %b %Y %H:%M')}")
-    print(f">>> BELM: {belm}\n")
+    print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
+    print(f">>> BELM: {', '.join(belm_list)}\n")
 
     await countdown_standby(target_dt)
 
-    p, browser, page = await launch_and_login(cfg, belm)
+    p, browser = await start_browser()
+
+    ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
+    if not ctx:
+        await browser.close()
+        await p.stop()
+        return
+
     print(f">>> Login selesai. URL: {page.url}")
 
-    await keep_alive_loop(page, target_dt, belm, cfg["email"], cfg["password"])
-
+    await save_session(ctx)
+    await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
     await race_submit(page)
 
     await asyncio.sleep(3000)
@@ -302,4 +394,114 @@ async def run():
     await p.stop()
 
 
-asyncio.run(run())
+async def mode_extract_url(cfg):
+    belm_list = pilih_belm()
+    p, browser = await start_browser()
+
+    ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
+    if not ctx:
+        await browser.close()
+        await p.stop()
+        return
+
+    url = page.url
+    print(f"\n>>> URL Tiket: {url}")
+    with open(URL_TIKET_FILE, "w") as f:
+        f.write(url + "\n")
+    print(f">>> URL disimpan ke {URL_TIKET_FILE}")
+
+    input("\nTekan Enter untuk tutup browser...")
+    await browser.close()
+    await p.stop()
+
+
+async def mode_extract_and_war(cfg):
+    belm_list = pilih_belm()
+    target_hhmm = input_jam()
+    target_dt = next_target(target_hhmm)
+
+    print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
+    print(f">>> BELM: {', '.join(belm_list)}\n")
+
+    await countdown_standby(target_dt)
+
+    p, browser = await start_browser()
+
+    ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
+    if not ctx:
+        await browser.close()
+        await p.stop()
+        return
+
+    url = page.url
+    print(f"\n>>> URL Tiket: {url}")
+    with open(URL_TIKET_FILE, "w") as f:
+        f.write(url + "\n")
+
+    await save_session(ctx)
+    await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
+    await race_submit(page)
+
+    await asyncio.sleep(3000)
+    await browser.close()
+    await p.stop()
+
+
+async def mode_cek_kuota(cfg):
+    belm_list = pilih_belm()
+    p, browser = await start_browser()
+
+    ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
+    if not ctx:
+        await browser.close()
+        await p.stop()
+        return
+
+    print(f">>> URL: {page.url}")
+    input("\nTekan Enter untuk tutup browser...")
+    await browser.close()
+    await p.stop()
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def show_menu():
+    print(r"""
+  ╔══════════════════════════════════════╗
+  ║         ANTAM BOT — PLAN-A           ║
+  ╠══════════════════════════════════════╣
+  ║  1. Login (simpan session)           ║
+  ║  2. Auto war (full flow)             ║
+  ║  3. Ekstrak URL tiket                ║
+  ║  4. Ekstrak URL + Auto war           ║
+  ║  5. Cek kuota tiket                  ║
+  ╚══════════════════════════════════════╝
+""")
+
+async def run():
+    with open("config.json") as f:
+        cfg = json.load(f)
+
+    show_menu()
+    pilihan = input("Pilih mode (1-5): ").strip()
+
+    modes = {
+        "1": mode_login_only,
+        "2": mode_auto_war,
+        "3": mode_extract_url,
+        "4": mode_extract_and_war,
+        "5": mode_cek_kuota,
+    }
+
+    handler = modes.get(pilihan)
+    if not handler:
+        print("Pilihan tidak valid!")
+        return
+
+    await handler(cfg)
+
+
+if __name__ == "__main__":
+    asyncio.run(run())

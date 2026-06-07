@@ -6,3 +6,6 @@ chrome_profile/
 pw_profile_antrean/
 config.json
 proxy.json
+session.json
+url_tiket.txt
+result_*.json
