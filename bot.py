@@ -8,7 +8,8 @@ from patchright.async_api import async_playwright
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logging.getLogger("playwright_captcha").setLevel(logging.WARNING)
+logging.getLogger("playwright_captcha").setLevel(logging.CRITICAL)
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 BELM_OPTIONS = [
     "ATGM-Gedung Antam",
@@ -503,11 +504,14 @@ async def run():
     except KeyboardInterrupt:
         pass
     finally:
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
-        for t in pending:
-            t.cancel()
-        if pending:
-            await asyncio.wait(pending, timeout=5)
+        others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for t in others:
+            if t.done():
+                t.exception() if not t.cancelled() else None
+            else:
+                t.cancel()
+        if others:
+            await asyncio.wait(others, timeout=5)
 
 
 if __name__ == "__main__":
