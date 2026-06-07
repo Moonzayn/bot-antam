@@ -8,6 +8,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 EMAIL = "pangkassobo@gmail.com"
 PASSWORD = "198456z"
+BELM = "Bintaro"
 
 def solve_math(text: str) -> str:
     nums = list(map(int, re.findall(r"\d+", text)))
@@ -85,6 +86,17 @@ async def run():
         await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
         await page.wait_for_timeout(5000)
         logging.info(f"Redirect ke: {page.url}")
+
+        await page.wait_for_selector("#site", timeout=10000)
+
+        option_value = await page.locator(f"#site option:has-text('{BELM}')").get_attribute("value")
+        await page.locator("#site").select_option(option_value)
+        logging.info(f"BELM dipilih: {BELM}")
+
+        await page.locator('button:has-text("Tampilkan Butik")').click()
+        logging.info("Tampilkan Butik diklik!")
+
+        await page.wait_for_timeout(5000)
 
         await browser.close()
 
