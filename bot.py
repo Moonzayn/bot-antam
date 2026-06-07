@@ -148,17 +148,10 @@ async def do_login(page, email: str, password: str):
         try:
             await solver.solve_captcha(
                 captcha_container=page,
-                captcha_type=CaptchaType.CLOUDFLARE_INTERSTITIAL,
+                captcha_type=CaptchaType.CLOUDFLARE_TURNSTILE,
             )
         except Exception as e:
             logging.info(f"Solver selesai: {e}")
-
-    try:
-        await page.wait_for_selector("input#aritmetika, input[name='aritmetika']", timeout=30000)
-        logging.info("CF selesai, form login ditemukan")
-    except:
-        logging.warning("Form login tidak muncul setelah CF solver")
-        return False
 
     for f in page.frames:
         try:
@@ -239,17 +232,10 @@ async def relogin(page, email: str, password: str, belm: str):
         try:
             await solver.solve_captcha(
                 captcha_container=page,
-                captcha_type=CaptchaType.CLOUDFLARE_INTERSTITIAL,
+                captcha_type=CaptchaType.CLOUDFLARE_TURNSTILE,
             )
         except Exception as e:
             logging.info(f"Solver selesai: {e}")
-
-    try:
-        await page.wait_for_selector("input#aritmetika, input[name='aritmetika']", timeout=30000)
-        logging.info("CF selesai, form login ditemukan")
-    except:
-        logging.warning("Form login tidak muncul setelah CF solver")
-        return
 
     for f in page.frames:
         try:
