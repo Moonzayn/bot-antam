@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+antrean_profile/
+chrome_profile/
+pw_profile_antrean/
+config.json
+proxy.json
