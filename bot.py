@@ -1,14 +1,51 @@
 import asyncio
 import re
+import json
 import logging
 from patchright.async_api import async_playwright
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-EMAIL = "pangkassobo@gmail.com"
-PASSWORD = "198456z"
-BELM = "Bintaro"
+BELM_OPTIONS = [
+    "ATGM-Gedung Antam",
+    "ATGM-Graha Dipta",
+    "Butik Emas LM - Balikpapan",
+    "Butik Emas LM - Bandung",
+    "Butik Emas LM - Bekasi",
+    "Butik Emas LM - Bintaro",
+    "Butik Emas LM - Bogor",
+    "Butik Emas LM - Denpasar",
+    "Butik Emas LM - Djuanda",
+    "Butik Emas LM - Gedung Antam",
+    "Butik Emas LM - Graha Dipta",
+    "Butik Emas LM - Makassar",
+    "Butik Emas LM - Medan",
+    "Butik Emas LM - Palembang",
+    "Butik Emas LM - Pekanbaru",
+    "Butik Emas LM - Puri Indah",
+    "Butik Emas LM - Semarang",
+    "Butik Emas LM - Serpong",
+    "Butik Emas LM - Setiabudi One",
+    "Butik Emas LM - Surabaya 1 Darmo",
+    "Butik Emas LM - Surabaya 2 Pakuwon",
+    "Butik Emas LM - Yogyakarta",
+    "CNBC Indonesia Jogja Financial Fest",
+    "Exhibition - BSI Tower",
+]
+
+def pilih_belm():
+    print("\n=== PILIH CABANG BELM ===\n")
+    for i, b in enumerate(BELM_OPTIONS, 1):
+        print(f"  {i:>2}. {b}")
+    while True:
+        try:
+            pilih = int(input(f"\nPilih nomor (1-{len(BELM_OPTIONS)}): "))
+            if 1 <= pilih <= len(BELM_OPTIONS):
+                return BELM_OPTIONS[pilih - 1]
+        except ValueError:
+            pass
+        print("Input tidak valid!")
 
 def solve_math(text: str) -> str:
     nums = list(map(int, re.findall(r"\d+", text)))
@@ -21,6 +58,13 @@ def solve_math(text: str) -> str:
     return str(sum(nums)) if nums else "0"
 
 async def run():
+    with open("config.json") as f:
+        cfg = json.load(f)
+    EMAIL = cfg["email"]
+    PASSWORD = cfg["password"]
+    BELM = pilih_belm()
+    print(f"\n>>> BELM dipilih: {BELM}\n")
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, channel="chrome")
         ctx = await browser.new_context()
@@ -48,14 +92,10 @@ async def run():
             logging.info("Form tidak ketemu di main frame, cek iframe...")
 
         frames = page.frames
-        for i, f in enumerate(frames):
-            logging.info(f"Frame {i}: {f.url[:80] if f.url else 'None'}")
-
         for f in frames:
             try:
                 math_inp = await f.query_selector("input#aritmetika, input[name='aritmetika']")
                 if math_inp:
-                    logging.info(f"Form ditemukan di frame {f.url[:60]}")
                     username = await f.query_selector("input[type='text'], input[name='username'], input[placeholder*='email' i]")
                     if username:
                         await username.fill("")
@@ -75,29 +115,23 @@ async def run():
                     btn = await f.query_selector("button:has-text('Log in'), button[type='submit']")
                     if btn:
                         await btn.click()
-                        logging.info("Login berhasil diklik!")
 
                     await page.wait_for_timeout(5000)
                     break
             except Exception as e:
                 logging.warning(f"Frame error: {e}")
 
-        logging.info("Klik Menu Antrean...")
         await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
         await page.wait_for_timeout(5000)
-        logging.info(f"Redirect ke: {page.url}")
 
         await page.wait_for_selector("#site", timeout=10000)
-
         option_value = await page.locator(f"#site option:has-text('{BELM}')").get_attribute("value")
         await page.locator("#site").select_option(option_value)
-        logging.info(f"BELM dipilih: {BELM}")
+        logging.info(f"Cabang: {BELM}")
 
         await page.locator('button:has-text("Tampilkan Butik")').click()
-        logging.info("Tampilkan Butik diklik!")
 
         await page.wait_for_timeout(5000)
-
         await browser.close()
 
 asyncio.run(run())
