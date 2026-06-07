@@ -74,12 +74,17 @@ async def run():
                     btn = await f.query_selector("button:has-text('Log in'), button[type='submit']")
                     if btn:
                         await btn.click()
-                        logging.info("Login button clicked!")
+                        logging.info("Login berhasil diklik!")
 
-                    await page.wait_for_timeout(10000)
+                    await page.wait_for_timeout(5000)
                     break
             except Exception as e:
                 logging.warning(f"Frame error: {e}")
+
+        logging.info("Klik Menu Antrean...")
+        await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
+        await page.wait_for_timeout(5000)
+        logging.info(f"Redirect ke: {page.url}")
 
         await browser.close()
 
