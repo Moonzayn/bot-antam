@@ -186,10 +186,12 @@ async def do_login(page, email: str, password: str):
     return False
 
 
-async def select_belm(page, belm: str):
-    await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
-    await page.wait_for_timeout(5000)
-    await page.wait_for_selector("#site", timeout=10000)
+async def select_belm_at_page(page, belm: str):
+    try:
+        await page.wait_for_selector("#site", timeout=5000)
+    except:
+        await page.goto("https://antrean.logammulia.com/antrean")
+        await page.wait_for_selector("#site", timeout=10000)
     option_value = await page.locator(f"#site option:has-text('{belm}')").get_attribute("value")
     await page.locator("#site").select_option(option_value)
     logging.info(f"Cabang: {belm}")
@@ -198,21 +200,18 @@ async def select_belm(page, belm: str):
 
 
 async def login_and_prepare(browser, cfg: dict, belm_list: list):
-    ctx = None
-    page = None
+    ctx = await browser.new_context()
+    page = await ctx.new_page()
+
+    ok = await do_login(page, cfg["email"], cfg["password"])
+    if not ok:
+        return None, None, None
+
+    await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
+    await page.wait_for_timeout(5000)
 
     for belm in belm_list:
-        if ctx:
-            await ctx.close()
-        ctx = await browser.new_context()
-        page = await ctx.new_page()
-
-        ok = await do_login(page, cfg["email"], cfg["password"])
-        if not ok:
-            logging.error("Login gagal")
-            continue
-
-        await select_belm(page, belm)
+        await select_belm_at_page(page, belm)
 
         kuota = page.locator("p.text-danger:has-text('Kuota antrean')")
         if await kuota.is_visible():
@@ -270,7 +269,9 @@ async def relogin(page, email: str, password: str, belm: str):
         except:
             pass
 
-    await select_belm(page, belm)
+    await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
+    await page.wait_for_timeout(5000)
+    await select_belm_at_page(page, belm)
 
 
 # ============================================================
