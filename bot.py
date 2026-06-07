@@ -130,8 +130,15 @@ async def run():
         logging.info(f"Cabang: {BELM}")
 
         await page.locator('button:has-text("Tampilkan Butik")').click()
+        await page.wait_for_timeout(3000)
 
-        await page.wait_for_timeout(5000)
+        kuota = page.locator("p.text-danger:has-text('Kuota antrean')")
+        if await kuota.is_visible():
+            print(f"\n>>> {BELM}: Kuota antrean tidak tersedia")
+        else:
+            print(f"\n>>> {BELM}: Kuota tersedia! Melanjutkan...")
+
+        await page.wait_for_timeout(3000)
         await browser.close()
 
 asyncio.run(run())
