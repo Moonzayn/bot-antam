@@ -5,11 +5,9 @@ import logging
 import os
 from datetime import datetime, timedelta
 from patchright.async_api import async_playwright
-from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logging.getLogger("playwright_captcha").setLevel(logging.CRITICAL)
-logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 BELM_OPTIONS = [
     "ATGM-Gedung Antam",
@@ -142,18 +140,42 @@ async def start_browser():
     return p, browser
 
 
+async def click_turnstile_checkbox(page) -> bool:
+    for _ in range(15):
+        has_token = await page.evaluate(
+            """() => document.querySelector('input[name="cf-turnstile-response"]')?.value?.length > 0"""
+        )
+        if has_token:
+            logging.info("Turnstile token already exists")
+            return True
+        try:
+            turnstile_iframe = None
+            for f in page.frames:
+                if "challenges.cloudflare.com" in f.url and "/turnstile/" in f.url:
+                    turnstile_iframe = f
+                    break
+            if not turnstile_iframe:
+                await asyncio.sleep(1)
+                continue
+            checkbox = await turnstile_iframe.wait_for_selector(
+                'input[type="checkbox"]', timeout=2000
+            )
+            if checkbox:
+                await checkbox.click(timeout=3000)
+        except:
+            pass
+        await asyncio.sleep(1)
+    return False
+
+
 async def do_login(page, email: str, password: str):
     await page.goto("https://antrean.logammulia.com/login")
     await asyncio.sleep(2)
 
-    async with ClickSolver(framework=FrameworkType.PATCHRIGHT, page=page) as solver:
-        try:
-            await solver.solve_captcha(
-                captcha_container=page,
-                captcha_type=CaptchaType.CLOUDFLARE_TURNSTILE,
-            )
-        except Exception as e:
-            logging.info(f"Solver selesai: {e}")
+    ok = await click_turnstile_checkbox(page)
+    if not ok:
+        logging.error("Turnstile gagal diselesaikan")
+        return False
 
     for f in page.frames:
         try:
@@ -230,14 +252,9 @@ async def relogin(page, email: str, password: str, belm: str):
     await page.goto("https://antrean.logammulia.com/login")
     await page.wait_for_timeout(3000)
 
-    async with ClickSolver(framework=FrameworkType.PATCHRIGHT, page=page) as solver:
-        try:
-            await solver.solve_captcha(
-                captcha_container=page,
-                captcha_type=CaptchaType.CLOUDFLARE_TURNSTILE,
-            )
-        except Exception as e:
-            logging.info(f"Solver selesai: {e}")
+    ok = await click_turnstile_checkbox(page)
+    if not ok:
+        return
 
     for f in page.frames:
         try:
