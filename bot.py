@@ -8,6 +8,7 @@ from patchright.async_api import async_playwright
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("playwright_captcha").setLevel(logging.WARNING)
 
 BELM_OPTIONS = [
     "ATGM-Gedung Antam",
@@ -497,7 +498,16 @@ async def run():
         print("Pilihan tidak valid!")
         return
 
-    await handler(cfg)
+    try:
+        await handler(cfg)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.wait(pending, timeout=5)
 
 
 if __name__ == "__main__":
