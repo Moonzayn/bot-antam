@@ -245,9 +245,21 @@ async def login_and_prepare(browser, cfg: dict, belm_list: list):
             pass
 
         try:
+            kuota_ada = page.locator("h2:has-text('Kuota Tersedia')")
+            if await kuota_ada.is_visible(timeout=3000):
+                sisa = page.locator("span.badge.bg-success")
+                if await sisa.is_visible(timeout=1000):
+                    sisa_text = await sisa.text_content()
+                    logging.info(f"{belm}: {sisa_text.strip()}")
+                else:
+                    logging.info(f"{belm}: Kuota tersedia!")
+        except:
+            pass
+
+        try:
             form_pool = page.locator("form[action*='masuk-pool']")
-            if await form_pool.is_visible(timeout=5000):
-                logging.info(f"{belm}: Kuota tersedia!")
+            if await form_pool.is_visible(timeout=3000):
+                logging.info(f"{belm}: Form antrean siap!")
                 return ctx, page, belm
         except:
             pass
@@ -255,7 +267,7 @@ async def login_and_prepare(browser, cfg: dict, belm_list: list):
         try:
             wakda = page.locator("#wakda")
             if await wakda.is_visible(timeout=3000):
-                logging.info(f"{belm}: Kuota tersedia!")
+                logging.info(f"{belm}: Slot tersedia!")
                 return ctx, page, belm
         except:
             pass
@@ -341,7 +353,8 @@ async def keep_alive_loop(page, target_dt: datetime, belm: str, email: str, pass
                 last_check = datetime.now()
 
             has_form = await page.evaluate("""() => {
-                return document.querySelector('form[action*="masuk-pool"]') !== null
+                return document.querySelector('h2:has-text("Kuota Tersedia")') !== null
+                    || document.querySelector('form[action*="masuk-pool"]') !== null
                     || document.querySelector('select[name*="time"], select[name*="slot"]') !== null
                     || document.querySelector('button:has-text("Ambil Antrean")') !== null
             }""")
@@ -371,7 +384,7 @@ async def race_submit(page):
 
     try:
         wakda = page.locator("#wakda")
-        await wakda.wait_for_selector(state="visible", timeout=5000)
+        await wakda.wait_for(state="visible", timeout=5000)
         options = await wakda.locator("option:not([disabled])").all()
         available = [o for o in options if await o.get_attribute("value") and await o.get_attribute("value") != ""]
         if not available:
@@ -380,11 +393,23 @@ async def race_submit(page):
 
         first = available[0]
         val = await first.get_attribute("value")
-        await wakda.select_option(val)
         slot_text = await first.text_content()
-        logging.info(f"Slot dipilih: {slot_text.strip()}")
 
-        csrf = await page.locator("input[name='csrf_test_name']").get_attribute("value")
+        await page.evaluate("""(v) => {
+            const sel = document.querySelector('#wakda');
+            if (sel) {
+                sel.removeAttribute('onchange');
+                sel.value = v;
+            }
+        }""", val)
+        logging.info(f"Slot dipilih: {slot_text.strip()}")
+        await page.wait_for_timeout(300)
+
+        logging.info("Menyelesaikan Turnstile di form antrean...")
+        ok = await click_turnstile_checkbox(page)
+        if not ok:
+            logging.warning("Turnstile form antrean tidak terdeteksi, lanjut submit...")
+        await page.wait_for_timeout(500)
 
         submit_btn = page.locator("button[type='submit']:not([disabled])")
         await submit_btn.first.click()
@@ -491,8 +516,6 @@ async def mode_auto_war(cfg):
     print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
     print(f">>> BELM: {', '.join(belm_list)}\n")
 
-    await countdown_standby(target_dt)
-
     p, browser = await start_browser()
 
     ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
@@ -504,8 +527,18 @@ async def mode_auto_war(cfg):
     print(f">>> Login selesai. URL: {page.url}")
 
     await save_session(ctx)
-    await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
-    result = await race_submit(page)
+
+    form_ready = await page.evaluate("""() => {
+        return document.querySelector('form[action*="masuk-pool"]') !== null
+            && document.querySelector('#wakda option:not([disabled])') !== null
+    }""")
+    if form_ready:
+        logging.info("Form & slot sudah siap! Submit langsung...")
+        result = await race_submit(page)
+    else:
+        await countdown_standby(target_dt)
+        await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
+        result = await race_submit(page)
 
     if result:
         print(f"\n>>> ANTREAN BERHASIL!")
@@ -549,8 +582,6 @@ async def mode_extract_and_war(cfg):
     print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
     print(f">>> BELM: {', '.join(belm_list)}\n")
 
-    await countdown_standby(target_dt)
-
     p, browser = await start_browser()
 
     ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
@@ -565,8 +596,18 @@ async def mode_extract_and_war(cfg):
         f.write(url + "\n")
 
     await save_session(ctx)
-    await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
-    result = await race_submit(page)
+
+    form_ready = await page.evaluate("""() => {
+        return document.querySelector('form[action*="masuk-pool"]') !== null
+            && document.querySelector('#wakda option:not([disabled])') !== null
+    }""")
+    if form_ready:
+        logging.info("Form & slot sudah siap! Submit langsung...")
+        result = await race_submit(page)
+    else:
+        await countdown_standby(target_dt)
+        await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
+        result = await race_submit(page)
 
     if result:
         print(f"\n>>> ANTREAN BERHASIL!")
