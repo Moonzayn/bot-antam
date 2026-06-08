@@ -8,6 +8,7 @@ from patchright.async_api import async_playwright
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 BELM_OPTIONS = [
     "ATGM-Gedung Antam",
@@ -235,13 +236,32 @@ async def login_and_prepare(browser, cfg: dict, belm_list: list):
     for belm in belm_list:
         await select_belm_at_page(page, belm)
 
-        kuota = page.locator("p.text-danger:has-text('Kuota antrean')")
-        if await kuota.is_visible():
-            logging.warning(f"{belm}: Kuota tidak tersedia, coba backup...")
-            continue
+        try:
+            kuota_habis = page.locator("h2:has-text('Kuota Tidak Tersedia')")
+            if await kuota_habis.is_visible(timeout=5000):
+                logging.warning(f"{belm}: Kuota tidak tersedia, coba backup...")
+                continue
+        except:
+            pass
 
-        logging.info(f"{belm}: Kuota tersedia!")
-        return ctx, page, belm
+        try:
+            form_pool = page.locator("form[action*='masuk-pool']")
+            if await form_pool.is_visible(timeout=5000):
+                logging.info(f"{belm}: Kuota tersedia!")
+                return ctx, page, belm
+        except:
+            pass
+
+        try:
+            wakda = page.locator("#wakda")
+            if await wakda.is_visible(timeout=3000):
+                logging.info(f"{belm}: Kuota tersedia!")
+                return ctx, page, belm
+        except:
+            pass
+
+        logging.warning(f"{belm}: Halaman antrean tidak dikenali, coba backup...")
+        continue
 
     logging.error("Semua BELM penuh atau error")
     return None, None, None
@@ -335,12 +355,94 @@ async def keep_alive_loop(page, target_dt: datetime, belm: str, email: str, pass
 
 
 # ============================================================
-# RACE SUBMIT (PLACEHOLDER)
+# RACE SUBMIT
 # ============================================================
 
 async def race_submit(page):
-    logging.info("=== RACE SUBMIT PHASE (placeholder) ===")
-    await page.wait_for_timeout(3000)
+    logging.info("=== RACE SUBMIT ===")
+
+    try:
+        ok_btn = page.locator("a.btn-text-primary:has-text('OK')")
+        if await ok_btn.is_visible(timeout=2000):
+            await ok_btn.click()
+            await page.wait_for_timeout(500)
+    except:
+        pass
+
+    try:
+        wakda = page.locator("#wakda")
+        await wakda.wait_for_selector(state="visible", timeout=5000)
+        options = await wakda.locator("option:not([disabled])").all()
+        available = [o for o in options if await o.get_attribute("value") and await o.get_attribute("value") != ""]
+        if not available:
+            logging.warning("Tidak ada slot waktu yang tersedia")
+            return None
+
+        first = available[0]
+        val = await first.get_attribute("value")
+        await wakda.select_option(val)
+        slot_text = await first.text_content()
+        logging.info(f"Slot dipilih: {slot_text.strip()}")
+
+        csrf = await page.locator("input[name='csrf_test_name']").get_attribute("value")
+
+        submit_btn = page.locator("button[type='submit']:not([disabled])")
+        await submit_btn.first.click()
+        await page.wait_for_timeout(5000)
+    except Exception as e:
+        logging.warning(f"Tidak ada form slot: {e}")
+
+    try:
+        await page.wait_for_selector("#DialogBasic h1.mb-1", timeout=10000)
+        await page.wait_for_timeout(1000)
+    except:
+        logging.warning("Modal antrean tidak muncul")
+        return None
+
+    details = {}
+    try:
+        details["queue_id"] = await page.locator("#DialogBasic h1.mb-1").text_content()
+        details["queue_id"] = details["queue_id"].strip()
+
+        qr_img = page.locator("#DialogBasic img[alt='QR Code']")
+        details["qr_src"] = await qr_img.get_attribute("src")
+
+        code_el = page.locator("#DialogBasic h2.mb-1")
+        details["code"] = (await code_el.text_content()).strip()
+
+        nik_el = page.locator("#DialogBasic h3.mb-1")
+        details["nik"] = (await nik_el.first.text_content()).strip()
+
+        name_el = page.locator("#DialogBasic h3.mb-1").nth(1)
+        details["name"] = (await name_el.text_content()).strip()
+
+        phone_el = page.locator("#DialogBasic h4.mb-1")
+        if await phone_el.is_visible():
+            details["phone"] = (await phone_el.text_content()).strip()
+    except Exception as e:
+        logging.error(f"Gagal parse detail antrean: {e}")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"result_{timestamp}.json"
+    with open(filename, "w") as f:
+        json.dump(details, f, indent=2)
+    logging.info(f"Hasil antrean disimpan ke {filename}")
+
+    if "qr_src" in details:
+        try:
+            img_url = details["qr_src"]
+            if img_url.startswith("/"):
+                img_url = "https://antrean.logammulia.com" + img_url
+            resp = await page.context.request.get(img_url)
+            if resp.ok:
+                qr_filename = f"qrcode_{timestamp}.png"
+                with open(qr_filename, "wb") as f:
+                    f.write(await resp.body())
+                logging.info(f"QR code disimpan ke {qr_filename}")
+        except Exception as e:
+            logging.warning(f"Gagal download QR: {e}")
+
+    return details
 
 
 # ============================================================
@@ -403,7 +505,15 @@ async def mode_auto_war(cfg):
 
     await save_session(ctx)
     await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
-    await race_submit(page)
+    result = await race_submit(page)
+
+    if result:
+        print(f"\n>>> ANTREAN BERHASIL!")
+        print(f"    Queue: {result.get('queue_id', '?')}")
+        print(f"    Code:  {result.get('code', '?')}")
+        print(f"    Nama:  {result.get('name', '?')}")
+    else:
+        print(f"\n>>> Gagal mendapatkan antrean")
 
     await asyncio.sleep(3000)
     await browser.close()
@@ -456,7 +566,15 @@ async def mode_extract_and_war(cfg):
 
     await save_session(ctx)
     await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
-    await race_submit(page)
+    result = await race_submit(page)
+
+    if result:
+        print(f"\n>>> ANTREAN BERHASIL!")
+        print(f"    Queue: {result.get('queue_id', '?')}")
+        print(f"    Code:  {result.get('code', '?')}")
+        print(f"    Nama:  {result.get('name', '?')}")
+    else:
+        print(f"\n>>> Gagal mendapatkan antrean")
 
     await asyncio.sleep(3000)
     await browser.close()
@@ -473,7 +591,39 @@ async def mode_cek_kuota(cfg):
         await p.stop()
         return
 
-    print(f">>> URL: {page.url}")
+    url = page.url
+    print(f">>> URL: {url}")
+
+    try:
+        modal = page.locator("#DialogBasic h1.mb-1")
+        if await modal.is_visible(timeout=3000):
+            qid = (await modal.text_content()).strip()
+            print(f">>> Antrean aktif: {qid}")
+    except:
+        pass
+
+    try:
+        kuota_habis = page.locator("h2:has-text('Kuota Tidak Tersedia')")
+        if await kuota_habis.is_visible(timeout=3000):
+            print(">>> Status: Kuota tidak tersedia")
+    except:
+        pass
+
+    try:
+        wakda = page.locator("#wakda")
+        if await wakda.is_visible(timeout=2000):
+            opts = await wakda.locator("option:not([disabled])").all()
+            avail = [o for o in opts if await o.get_attribute("value") and await o.get_attribute("value") != ""]
+            if avail:
+                print(f">>> Slot tersedia: {len(avail)}")
+                for a in avail:
+                    txt = (await a.text_content()).strip()
+                    print(f"    - {txt}")
+            else:
+                print(">>> Semua slot penuh")
+    except:
+        pass
+
     input("\nTekan Enter untuk tutup browser...")
     await browser.close()
     await p.stop()
@@ -484,16 +634,16 @@ async def mode_cek_kuota(cfg):
 # ============================================================
 
 def show_menu():
-    print(r"""
-  ╔══════════════════════════════════════╗
-  ║         ANTAM BOT — PLAN-A           ║
-  ╠══════════════════════════════════════╣
-  ║  1. Login (simpan session)           ║
-  ║  2. Auto war (full flow)             ║
-  ║  3. Ekstrak URL tiket                ║
-  ║  4. Ekstrak URL + Auto war           ║
-  ║  5. Cek kuota tiket                  ║
-  ╚══════════════════════════════════════╝
+    print("""
+  ======================================
+         ANTAM BOT -- PLAN-A
+  ======================================
+   1. Login (simpan session)
+   2. Auto war (full flow)
+   3. Ekstrak URL tiket
+   4. Ekstrak URL + Auto war
+   5. Cek kuota tiket
+  ======================================
 """)
 
 async def run():
