@@ -429,8 +429,8 @@ async def race_submit(page):
             logging.warning("Turnstile form antrean tidak terdeteksi, lanjut submit...")
         await page.wait_for_timeout(500)
 
-        submit_btn = page.locator("button[type='submit']:not([disabled])")
-        await submit_btn.first.click()
+        submit_btn = page.locator('button:has-text("Ambil Antrean"):not([disabled])')
+        await submit_btn.click()
         await page.wait_for_timeout(5000)
     except Exception as e:
         logging.warning(f"Tidak ada form slot: {e}")
