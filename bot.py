@@ -327,6 +327,7 @@ async def relogin(page, email: str, password: str, belm: str):
 
 async def keep_alive_loop(page, target_dt: datetime, belm: str, email: str, password: str):
     last_check = datetime.now()
+    last_fetch_check = datetime.now()
     last_url = page.url
     logging.info(f"Keep alive dimulai. URL: {last_url}")
 
@@ -351,6 +352,23 @@ async def keep_alive_loop(page, target_dt: datetime, belm: str, email: str, pass
                     await relogin(page, email, password, belm)
                     last_url = page.url
                 last_check = datetime.now()
+
+            if (datetime.now() - last_fetch_check).total_seconds() >= 30:
+                form_remote = await page.evaluate("""async () => {
+                    try {
+                        const resp = await fetch(window.location.href, { credentials: 'include' });
+                        const html = await resp.text();
+                        return html.includes('Kuota Tersedia')
+                            || html.includes('masuk-pool')
+                            || html.includes('Ambil Antrean');
+                    } catch { return false; }
+                }""")
+                if form_remote:
+                    logging.info("Form terdeteksi via background fetch! Reload page...")
+                    await page.reload()
+                    await page.wait_for_timeout(2000)
+                    return
+                last_fetch_check = datetime.now()
 
             has_form = await page.evaluate("""() => {
                 return document.querySelector('h2:has-text("Kuota Tersedia")') !== null
