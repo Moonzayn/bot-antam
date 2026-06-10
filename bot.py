@@ -556,7 +556,6 @@ async def mode_auto_war(cfg):
     print(f">>> BELM: {', '.join(belm_list)}\n")
 
     p, browser = await start_browser()
-
     ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
     if not ctx:
         await browser.close()
@@ -564,7 +563,6 @@ async def mode_auto_war(cfg):
         return
 
     print(f">>> Login selesai. URL: {page.url}")
-
     await save_session(ctx)
 
     form_ready = await page.evaluate("""() => {
@@ -575,7 +573,22 @@ async def mode_auto_war(cfg):
         logging.info("Form & slot sudah siap! Submit langsung...")
         result = await race_submit(page)
     else:
+        logging.info("Form belum siap. Tutup browser, lanjut countdown...")
+        await browser.close()
+        await p.stop()
+
         await countdown_standby(target_dt)
+
+        p, browser = await start_browser()
+        ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
+        if not ctx:
+            await browser.close()
+            await p.stop()
+            return
+
+        print(f">>> Login fase-2 selesai. URL: {page.url}")
+        await save_session(ctx)
+
         await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
         result = await race_submit(page)
 
@@ -622,7 +635,6 @@ async def mode_extract_and_war(cfg):
     print(f">>> BELM: {', '.join(belm_list)}\n")
 
     p, browser = await start_browser()
-
     ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
     if not ctx:
         await browser.close()
@@ -644,7 +656,26 @@ async def mode_extract_and_war(cfg):
         logging.info("Form & slot sudah siap! Submit langsung...")
         result = await race_submit(page)
     else:
+        logging.info("Form belum siap. Tutup browser, lanjut countdown...")
+        await browser.close()
+        await p.stop()
+
         await countdown_standby(target_dt)
+
+        p, browser = await start_browser()
+        ctx, page, active_belm = await login_and_prepare(browser, cfg, belm_list)
+        if not ctx:
+            await browser.close()
+            await p.stop()
+            return
+
+        url = page.url
+        print(f"\n>>> URL Tiket (fase-2): {url}")
+        with open(URL_TIKET_FILE, "w") as f:
+            f.write(url + "\n")
+
+        await save_session(ctx)
+
         await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
         result = await race_submit(page)
 
