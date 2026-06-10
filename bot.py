@@ -400,6 +400,7 @@ async def race_submit(page):
     except:
         pass
 
+    # Phase 1: Pilih slot & submit ambil antrean
     try:
         wakda = page.locator("#wakda")
         await wakda.wait_for(state="visible", timeout=5000)
@@ -429,12 +430,32 @@ async def race_submit(page):
             logging.warning("Turnstile form antrean tidak terdeteksi, lanjut submit...")
         await page.wait_for_timeout(500)
 
+        logging.info("Klik Ambil Antrean...")
         submit_btn = page.locator('button:has-text("Ambil Antrean"):not([disabled])')
         await submit_btn.click()
         await page.wait_for_timeout(5000)
     except Exception as e:
-        logging.warning(f"Tidak ada form slot: {e}")
+        logging.warning(f"Tidak ada form antrean: {e}")
 
+    # Phase 2: Verify PIN / math captcha (redirect /masuk-pool)
+    try:
+        aritmetika = page.locator("#aritmetika")
+        if await aritmetika.is_visible(timeout=5000):
+            label = page.locator("h3")
+            text = await label.text_content() or ""
+            answer = solve_math(text.strip())
+            await aritmetika.fill(answer)
+            logging.info(f"PIN math: {text.strip()} -> {answer}")
+
+            verify_btn = page.locator('button[type="submit"]:has-text("Verify")')
+            await verify_btn.click()
+            await page.wait_for_timeout(5000)
+        else:
+            logging.info("Tidak ada math captcha, mungkin modal langsung muncul")
+    except Exception as e:
+        logging.info(f"Tidak ada halaman verifikasi: {e}")
+
+    # Phase 3: Parse result modal
     try:
         await page.wait_for_selector("#DialogBasic h1.mb-1", timeout=10000)
         await page.wait_for_timeout(1000)
