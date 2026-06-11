@@ -10,6 +10,8 @@ from patchright.async_api import async_playwright
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
+RATE_LIMITED = "RATE_LIMITED"
+
 BELM_OPTIONS = [
     "ATGM-Gedung Antam",
     "ATGM-Graha Dipta",
@@ -76,6 +78,23 @@ def solve_math(text: str) -> str:
     if "dikurang" in text:
         return str(abs(nums[0] - nums[1])) if len(nums) >= 2 else str(nums[0])
     return str(sum(nums)) if nums else "0"
+
+
+async def check_rate_limit(page) -> bool:
+    try:
+        swal = page.locator("#swal2-title:has-text('Error')")
+        if await swal.is_visible(timeout=1500):
+            text = await swal.text_content()
+            logging.warning(f"Rate limited: {text.strip()}")
+            ok_btn = page.locator(".swal2-confirm, button:has-text('OK')")
+            await ok_btn.first.click()
+            await page.wait_for_timeout(1000)
+            await page.goto("https://antrean.logammulia.com/antrean")
+            await page.wait_for_selector("#site", timeout=10000)
+            return True
+    except:
+        pass
+    return False
 
 
 def input_jam() -> str:
@@ -423,47 +442,58 @@ async def keep_alive_belm(page, target_dt: datetime, email: str, password: str):
 # ============================================================
 
 async def submit_at_target(page, belm_list: list, cfg: dict):
-    for belm in belm_list:
-        await select_belm_at_page(page, belm)
+    for attempt in range(1, 4):
+        for belm in belm_list:
+            logging.info(f"Percobaan {attempt}: {belm}")
+            await select_belm_at_page(page, belm)
 
-        try:
-            form_pool = page.locator("form[action*='masuk-pool']")
-            if await form_pool.is_visible(timeout=5000):
-                logging.info(f"{belm}: Form antrean siap!")
-                result = await race_submit(page)
-                if result:
-                    return result
-                logging.warning(f"{belm}: Submit gagal, coba backup...")
-                continue
-        except:
-            pass
+            try:
+                form_pool = page.locator("form[action*='masuk-pool']")
+                if await form_pool.is_visible(timeout=5000):
+                    logging.info(f"{belm}: Form antrean siap!")
+                    result = await race_submit(page)
+                    if result == RATE_LIMITED:
+                        logging.warning(f"Rate limited percobaan {attempt}/3")
+                        await asyncio.sleep(attempt * 5)
+                        break
+                    if result:
+                        return result
+                    continue
+            except:
+                pass
 
-        try:
-            wakda = page.locator("#wakda")
-            if await wakda.is_visible(timeout=3000):
-                logging.info(f"{belm}: Slot tersedia!")
-                result = await race_submit(page)
-                if result:
-                    return result
-                logging.warning(f"{belm}: Submit gagal, coba backup...")
-                continue
-        except:
-            pass
+            try:
+                wakda = page.locator("#wakda")
+                if await wakda.is_visible(timeout=3000):
+                    logging.info(f"{belm}: Slot tersedia!")
+                    result = await race_submit(page)
+                    if result == RATE_LIMITED:
+                        logging.warning(f"Rate limited percobaan {attempt}/3")
+                        await asyncio.sleep(attempt * 5)
+                        break
+                    if result:
+                        return result
+                    continue
+            except:
+                pass
 
-        try:
-            kuota = page.locator("h2:has-text('Kuota Tidak Tersedia')")
-            if await kuota.is_visible(timeout=3000):
-                logging.warning(f"{belm}: Kuota tidak tersedia, coba backup...")
-                continue
-        except:
-            pass
+            try:
+                kuota = page.locator("h2:has-text('Kuota Tidak Tersedia')")
+                if await kuota.is_visible(timeout=3000):
+                    logging.warning(f"{belm}: Kuota tidak tersedia, coba backup...")
+                    continue
+            except:
+                pass
 
-        logging.info(f"{belm}: Form belum siap, keep alive...")
-        next_hour = datetime.now() + timedelta(hours=1)
-        await keep_alive_loop(page, next_hour, belm, cfg["email"], cfg["password"])
-        result = await race_submit(page)
-        if result:
-            return result
+            logging.info(f"{belm}: Form belum siap, keep alive...")
+            next_hour = datetime.now() + timedelta(hours=1)
+            await keep_alive_loop(page, next_hour, belm, cfg["email"], cfg["password"])
+            result = await race_submit(page)
+            if result == RATE_LIMITED:
+                await asyncio.sleep(attempt * 5)
+                break
+            if result:
+                return result
 
     return None
 
@@ -499,7 +529,12 @@ async def mode_auto_war_v2(cfg):
 
     await keep_alive_belm(page, target_dt, cfg["email"], cfg["password"])
 
-    result = await submit_at_target(page, belm_list, cfg)
+    for wave in range(1, 4):
+        result = await submit_at_target(page, belm_list, cfg)
+        if result:
+            break
+        logging.warning(f"Wave {wave} gagal, tunggu 30 detik sebelum coba lagi...")
+        await asyncio.sleep(30)
 
     if result:
         print(f"\n>>> ANTREAN BERHASIL!")
@@ -563,6 +598,9 @@ async def race_submit(page):
         submit_btn = page.locator('button:has-text("Ambil Antrean"):not([disabled])')
         await submit_btn.click()
         await page.wait_for_timeout(5000)
+
+        if await check_rate_limit(page):
+            return RATE_LIMITED
     except Exception as e:
         logging.warning(f"Tidak ada form antrean: {e}")
 
@@ -579,6 +617,9 @@ async def race_submit(page):
             verify_btn = page.locator('button[type="submit"]:has-text("Verify")')
             await verify_btn.click()
             await page.wait_for_timeout(5000)
+
+            if await check_rate_limit(page):
+                return RATE_LIMITED
         else:
             logging.info("Tidak ada math captcha, mungkin modal langsung muncul")
     except Exception as e:

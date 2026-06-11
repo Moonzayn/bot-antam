@@ -10,6 +10,8 @@ from patchright.async_api import async_playwright
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
+RATE_LIMITED = "RATE_LIMITED"
+
 BELM_OPTIONS = [
     "ATGM-Gedung Antam",
     "ATGM-Graha Dipta",
@@ -76,6 +78,23 @@ def solve_math(text: str) -> str:
     if "dikurang" in text:
         return str(abs(nums[0] - nums[1])) if len(nums) >= 2 else str(nums[0])
     return str(sum(nums)) if nums else "0"
+
+
+async def check_rate_limit(page) -> bool:
+    try:
+        swal = page.locator("#swal2-title:has-text('Error')")
+        if await swal.is_visible(timeout=1500):
+            text = await swal.text_content()
+            logging.warning(f"Rate limited: {text.strip()}")
+            ok_btn = page.locator(".swal2-confirm, button:has-text('OK')")
+            await ok_btn.first.click()
+            await page.wait_for_timeout(1000)
+            await page.goto("https://antrean.logammulia.com/antrean")
+            await page.wait_for_selector("#site", timeout=10000)
+            return True
+    except:
+        pass
+    return False
 
 
 def input_jam() -> str:
@@ -434,6 +453,9 @@ async def race_submit(page):
         submit_btn = page.locator('button:has-text("Ambil Antrean"):not([disabled])')
         await submit_btn.click()
         await page.wait_for_timeout(5000)
+
+        if await check_rate_limit(page):
+            return RATE_LIMITED
     except Exception as e:
         logging.warning(f"Tidak ada form antrean: {e}")
 
@@ -450,6 +472,9 @@ async def race_submit(page):
             verify_btn = page.locator('button[type="submit"]:has-text("Verify")')
             await verify_btn.click()
             await page.wait_for_timeout(5000)
+
+            if await check_rate_limit(page):
+                return RATE_LIMITED
         else:
             logging.info("Tidak ada math captcha, mungkin modal langsung muncul")
     except Exception as e:
@@ -571,7 +596,12 @@ async def mode_auto_war(cfg):
     }""")
     if form_ready:
         logging.info("Form & slot sudah siap! Submit langsung...")
-        result = await race_submit(page)
+        for attempt in range(1, 4):
+            result = await race_submit(page)
+            if result == RATE_LIMITED:
+                await asyncio.sleep(attempt * 5)
+                continue
+            break
     else:
         logging.info("Form belum siap. Tutup browser, lanjut countdown...")
         await browser.close()
@@ -590,7 +620,18 @@ async def mode_auto_war(cfg):
         await save_session(ctx)
 
         await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
-        result = await race_submit(page)
+        for attempt in range(1, 4):
+            result = await race_submit(page)
+            if result == RATE_LIMITED:
+                await asyncio.sleep(attempt * 5)
+                await select_belm_at_page(page, active_belm)
+                try:
+                    wakda = page.locator("#wakda")
+                    await wakda.wait_for(state="visible", timeout=8000)
+                except:
+                    pass
+                continue
+            break
 
     if result:
         print(f"\n>>> ANTREAN BERHASIL!")
@@ -654,7 +695,12 @@ async def mode_extract_and_war(cfg):
     }""")
     if form_ready:
         logging.info("Form & slot sudah siap! Submit langsung...")
-        result = await race_submit(page)
+        for attempt in range(1, 4):
+            result = await race_submit(page)
+            if result == RATE_LIMITED:
+                await asyncio.sleep(attempt * 5)
+                continue
+            break
     else:
         logging.info("Form belum siap. Tutup browser, lanjut countdown...")
         await browser.close()
@@ -677,7 +723,18 @@ async def mode_extract_and_war(cfg):
         await save_session(ctx)
 
         await keep_alive_loop(page, target_dt, active_belm, cfg["email"], cfg["password"])
-        result = await race_submit(page)
+        for attempt in range(1, 4):
+            result = await race_submit(page)
+            if result == RATE_LIMITED:
+                await asyncio.sleep(attempt * 5)
+                await select_belm_at_page(page, active_belm)
+                try:
+                    wakda = page.locator("#wakda")
+                    await wakda.wait_for(state="visible", timeout=8000)
+                except:
+                    pass
+                continue
+            break
 
     if result:
         print(f"\n>>> ANTREAN BERHASIL!")
