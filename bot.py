@@ -97,20 +97,26 @@ async def check_rate_limit(page) -> bool:
     return False
 
 
-def input_jam() -> str:
+def input_jam():
     while True:
-        j = input("Target jam buka (HH:MM): ").strip()
-        if re.match(r"^\d{2}:\d{2}$", j):
-            h, m = map(int, j.split(":"))
-            if 0 <= h <= 23 and 0 <= m <= 59:
-                return j
-        print("Format salah! Gunakan HH:MM (contoh: 08:30)")
+        j = input("Target jam buka (HH:MM or HH:MM:SS): ").strip()
+        parts = j.split(":")
+        if len(parts) == 2 and re.match(r"^\d{2}:\d{2}$", j):
+            h, m = int(parts[0]), int(parts[1])
+            s = 0
+        elif len(parts) == 3 and re.match(r"^\d{2}:\d{2}:\d{2}$", j):
+            h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+        else:
+            print("Format salah! Gunakan HH:MM (contoh: 08:30) atau HH:MM:SS (contoh: 08:30:15)")
+            continue
+        if 0 <= h <= 23 and 0 <= m <= 59 and 0 <= s <= 59:
+            return h, m, s
+        print("Format salah! Gunakan HH:MM (contoh: 08:30) atau HH:MM:SS (contoh: 08:30:15)")
 
 
-def next_target(hhmm: str) -> datetime:
+def next_target(h: int, m: int, s: int = 0) -> datetime:
     now = datetime.now()
-    h, m = map(int, hhmm.split(":"))
-    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    target = now.replace(hour=h, minute=m, second=s, microsecond=0)
     if target <= now:
         target += timedelta(days=1)
     while target.weekday() >= 5:
@@ -574,10 +580,10 @@ async def mode_login_only(cfg):
 
 async def mode_auto_war(cfg):
     belm_list = pilih_belm()
-    target_hhmm = input_jam()
-    target_dt = next_target(target_hhmm)
+    h, m, s = input_jam()
+    target_dt = next_target(h, m, s)
 
-    print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
+    print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M:%S')}")
     print(f">>> BELM: {', '.join(belm_list)}\n")
 
     p, browser = await start_browser()
@@ -669,10 +675,10 @@ async def mode_extract_url(cfg):
 
 async def mode_extract_and_war(cfg):
     belm_list = pilih_belm()
-    target_hhmm = input_jam()
-    target_dt = next_target(target_hhmm)
+    h, m, s = input_jam()
+    target_dt = next_target(h, m, s)
 
-    print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M')}")
+    print(f"\n>>> Target: {target_dt.strftime('%A %d %b %Y %H:%M:%S')}")
     print(f">>> BELM: {', '.join(belm_list)}\n")
 
     p, browser = await start_browser()
