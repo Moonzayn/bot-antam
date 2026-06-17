@@ -917,6 +917,114 @@ async def mode_cek_kuota(cfg):
 
 
 # ============================================================
+# MODE 7: CHECK ALL CABANG (fast)
+# ============================================================
+
+async def _select_belm_fast(page, belm: str):
+    try:
+        await page.wait_for_selector("#site", timeout=5000)
+    except:
+        await page.goto("https://antrean.logammulia.com/antrean")
+        await page.wait_for_selector("#site", timeout=10000)
+    option_value = await page.locator(f"#site option:has-text('{belm}')").get_attribute("value")
+    await page.locator("#site").select_option(option_value)
+    await page.locator('button:has-text("Tampilkan Butik")').click()
+    await asyncio.sleep(2)
+
+async def mode_check_all(cfg):
+    p, browser = await start_browser()
+    ctx = await browser.new_context()
+    page = await ctx.new_page()
+
+    ok = await do_login(page, cfg["email"], cfg["password"])
+    if not ok:
+        print("Login gagal!")
+        await browser.close()
+        await p.stop()
+        return
+
+    await page.locator('a.btn.btn-primary.btn-lg:has-text("Menu Antrean")').first.click()
+    await page.wait_for_timeout(5000)
+    await save_session(ctx)
+
+    print(f"\n{'='*60}")
+    print(f"  CHECK ALL CABANG BELM")
+    print(f"  {datetime.now().strftime('%A %d %b %Y %H:%M:%S')}")
+    print(f"{'='*60}\n")
+
+    results = []
+
+    for i, belm in enumerate(BELM_OPTIONS, 1):
+        print(f"\n  [{i:>2}/{len(BELM_OPTIONS)}] {belm}")
+        try:
+            await _select_belm_fast(page, belm)
+            body_text = await page.evaluate("() => document.body.innerText")
+
+            if "Kuota Tidak Tersedia" in body_text:
+                print(f"  Status: Kuota tidak tersedia")
+                results.append((belm, "Kuota tidak tersedia", "", ""))
+            elif "Kuota Tersedia" in body_text:
+                sisa_match = re.search(r"Sisa\s*[:]\s*(\d+)", body_text)
+                sisa_text = sisa_match.group(1) if sisa_match else "?"
+
+                sesi_match = re.search(r"Sesi waktu ambil antrean\s*[:]\s*(.+)", body_text)
+                sesi_text = sesi_match.group(1).strip() if sesi_match else "?"
+
+                print(f"  Sisa : {sisa_text}")
+                print(f"  Sesi waktu ambil antrean : {sesi_text}")
+                results.append((belm, "Kuota tersedia", sisa_text, sesi_text))
+            else:
+                print(f"  Status: Tidak diketahui")
+                results.append((belm, "Tidak diketahui", "", ""))
+
+        except Exception as e:
+            print(f"  Error: {e}")
+            results.append((belm, f"Error: {e}", "", ""))
+
+        await page.goto("https://antrean.logammulia.com/antrean")
+        await page.wait_for_selector("#site", timeout=10000)
+
+    print(f"\n{'='*60}")
+    print(f"  RINGKASAN")
+    print(f"{'='*60}\n")
+
+    tersedia = [r for r in results if "Kuota tersedia" in r[1]]
+    ada_slot = [r for r in results if r[1].startswith("Slot:")]
+    habis = [r for r in results if r[1] in ("Kuota tidak tersedia", "Slot penuh")]
+    unknown = [r for r in results if r not in tersedia + ada_slot + habis]
+
+    if tersedia:
+        print(f"  [TERSEDIA] ({len(tersedia)}):")
+        for nama, _, sisa, sesi in tersedia:
+            print(f"     {nama}")
+            print(f"     Sisa : {sisa}")
+            print(f"     Sesi waktu ambil antrean : {sesi}")
+            print()
+    if ada_slot:
+        print(f"  [ADA SLOT] ({len(ada_slot)}):")
+        for nama, s, _, _ in ada_slot:
+            print(f"     {nama} — {s}")
+    if habis:
+        print(f"\n  [TIDAK TERSEDIA] ({len(habis)}):")
+        for nama, s, _, _ in habis:
+            print(f"     - {nama}")
+    if unknown:
+        print(f"\n  [TIDAK DIKETAHUI] ({len(unknown)}):")
+        for nama, s, _, _ in unknown:
+            print(f"     - {nama} ({s})")
+
+    print(f"{'='*60}\n")
+
+    with open("check_all_result.json", "w") as f:
+        json.dump([{"cabang": n, "status": s, "sisa": s2, "sesi": s3} for n, s, s2, s3 in results], f, indent=2)
+    print("  Hasil disimpan ke check_all_result.json")
+
+    input("\n  Tekan Enter untuk tutup browser...")
+    await browser.close()
+    await p.stop()
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -931,6 +1039,7 @@ def show_menu():
    4. Ekstrak URL + Auto war
    5. Cek kuota tiket
    6. Auto war V2 (standby di BELM)
+   7. Check all cabang BELM
   ======================================
 """)
 
@@ -939,7 +1048,7 @@ async def run():
         cfg = json.load(f)
 
     show_menu()
-    pilihan = input("Pilih mode (1-6): ").strip()
+    pilihan = input("Pilih mode (1-7): ").strip()
 
     modes = {
         "1": mode_login_only,
@@ -948,6 +1057,7 @@ async def run():
         "4": mode_extract_and_war,
         "5": mode_cek_kuota,
         "6": mode_auto_war_v2,
+        "7": mode_check_all,
     }
 
     handler = modes.get(pilihan)
